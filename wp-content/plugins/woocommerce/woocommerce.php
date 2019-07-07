@@ -39,14 +39,6 @@ function wc() {
 	return WooCommerce::instance();
 }
 
-function getParentCategories() {
-    global $wpdb;
-    $sql = "SELECT term_id as id, name, slug FROM wp_terms where term_id in (SELECT term_id FROM wp_term_taxonomy where parent = 0 and taxonomy = 'category') order by name asc";
-    $parents = $wpdb->get_results( $sql );
-    var_dump($parents[0]);
-    return $parents;
-}
-add_shortcode( 'getParentCategories', 'getParentCategories' );
 
 // Global for backwards compatibility.
 $GLOBALS['woocommerce'] = wc();
