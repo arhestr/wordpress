@@ -26,7 +26,7 @@ define('DB_NAME', 'firstWp');
 define('DB_USER', 'root');
 
 /** Пароль к базе данных MySQL */
-define('DB_PASSWORD', '');
+define('DB_PASSWORD', 'pleomaxdvdrw4X!');
 
 /** Имя сервера MySQL */
 define('DB_HOST', 'localhost');

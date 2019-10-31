@@ -67,6 +67,14 @@ class Jetpack_Core_API_Module_Toggle_Endpoint
 			);
 		}
 
+		if ( ! Jetpack_Plan::supports( $module_slug ) ) {
+			return new WP_Error(
+				'not_supported',
+				esc_html__( 'The requested Jetpack module is not supported by your plan.', 'jetpack' ),
+				array( 'status' => 424 )
+			);
+		}
+
 		if ( Jetpack::activate_module( $module_slug, false, false ) ) {
 			return rest_ensure_response( array(
 				'code' 	  => 'success',
@@ -404,7 +412,6 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 		}
 
 		$settings = Jetpack_Core_Json_Api_Endpoints::get_updateable_data_list( 'settings' );
-		$holiday_snow_option_name = Jetpack_Core_Json_Api_Endpoints::holiday_snow_option_name();
 
 		if ( ! function_exists( 'is_plugin_active' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -413,24 +420,17 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 		foreach ( $settings as $setting => $properties ) {
 			switch ( $setting ) {
 				case 'lang_id':
-					if ( defined( 'WPLANG' ) ) {
-						// We can't affect this setting, so warn the client
-						$response[ $setting ] = 'error_const';
-						break;
-					}
-
 					if ( ! current_user_can( 'install_languages' ) ) {
 						// The user doesn't have caps to install language packs, so warn the client
 						$response[ $setting ] = 'error_cap';
 						break;
 					}
 
-					$value = get_option( 'WPLANG' );
+					$value = get_option( 'WPLANG', '' );
+					if ( empty( $value ) && defined( 'WPLANG' ) ) {
+						$value = WPLANG;
+					}
 					$response[ $setting ] = empty( $value ) ? 'en_US' : $value;
-					break;
-
-				case $holiday_snow_option_name:
-					$response[ $setting ] = get_option( $holiday_snow_option_name ) === 'letitsnow';
 					break;
 
 				case 'wordpress_api_key':
@@ -642,7 +642,7 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 
 			switch ( $option ) {
 				case 'lang_id':
-					if ( defined( 'WPLANG' ) || ! current_user_can( 'install_languages' ) ) {
+					if ( ! current_user_can( 'install_languages' ) ) {
 						// We can't affect this setting
 						$updated = false;
 						break;
@@ -743,8 +743,14 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 				case 'bing':
 				case 'pinterest':
 				case 'yandex':
-					$grouped_options          = $grouped_options_current = (array) get_option( 'verification_services_codes' );
-					$grouped_options[$option] = $value;
+					$grouped_options = $grouped_options_current = (array) get_option( 'verification_services_codes' );
+
+					// Extracts the content attribute from the HTML meta tag if needed
+					if ( preg_match( '#.*<meta name="(?:[^"]+)" content="([^"]+)" />.*#i', $value, $matches ) ) {
+						$grouped_options[ $option ] = $matches[1];
+					} else {
+						$grouped_options[ $option ] = $value;
+					}
 
 					// If option value was the same, consider it done.
 					$updated = $grouped_options_current != $grouped_options ? update_option( 'verification_services_codes', $grouped_options ) : true;
@@ -800,62 +806,6 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 					$updated = get_option( $option ) !== $value ? update_option( $option, $value ) : true;
 					break;
 
-				case 'onpublish':
-				case 'onupdate':
-				case 'Bias Language':
-				case 'Cliches':
-				case 'Complex Expression':
-				case 'Diacritical Marks':
-				case 'Double Negative':
-				case 'Hidden Verbs':
-				case 'Jargon Language':
-				case 'Passive voice':
-				case 'Phrases to Avoid':
-				case 'Redundant Expression':
-				case 'guess_lang':
-					if ( in_array( $option, array( 'onpublish', 'onupdate' ) ) ) {
-						$atd_option = 'AtD_check_when';
-					} elseif ( 'guess_lang' == $option ) {
-						$atd_option = 'AtD_guess_lang';
-						$option     = 'true';
-					} else {
-						$atd_option = 'AtD_options';
-					}
-					$user_id                 = get_current_user_id();
-					if ( ! function_exists( 'AtD_get_options' ) ) {
-						include_once( JETPACK__PLUGIN_DIR . 'modules/after-the-deadline.php' );
-					}
-					$grouped_options_current = AtD_get_options( $user_id, $atd_option );
-					unset( $grouped_options_current['name'] );
-					$grouped_options = $grouped_options_current;
-					if ( $value && ! isset( $grouped_options [$option] ) ) {
-						$grouped_options [$option] = $value;
-					} elseif ( ! $value && isset( $grouped_options [$option] ) ) {
-						unset( $grouped_options [$option] );
-					}
-					// If option value was the same, consider it done, otherwise try to update it.
-					$options_to_save = implode( ',', array_keys( $grouped_options ) );
-					$updated         = $grouped_options != $grouped_options_current ? AtD_update_setting( $user_id, $atd_option, $options_to_save ) : true;
-					break;
-
-				case 'ignored_phrases':
-				case 'unignore_phrase':
-					$user_id         = get_current_user_id();
-					$atd_option      = 'AtD_ignored_phrases';
-					$grouped_options = $grouped_options_current = explode( ',', AtD_get_setting( $user_id, $atd_option ) );
-					if ( 'ignored_phrases' == $option ) {
-						$grouped_options = explode( ',', $value );
-					} else {
-						$index = array_search( $value, $grouped_options );
-						if ( false !== $index ) {
-							unset( $grouped_options[$index] );
-							$grouped_options = array_values( $grouped_options );
-						}
-					}
-					$ignored_phrases = implode( ',', array_filter( array_map( 'strip_tags', $grouped_options ) ) );
-					$updated         = $grouped_options != $grouped_options_current ? AtD_update_setting( $user_id, $atd_option, $ignored_phrases ) : true;
-					break;
-
 				case 'admin_bar':
 				case 'roles':
 				case 'count_roles':
@@ -868,10 +818,6 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 
 					// If option value was the same, consider it done.
 					$updated = $grouped_options_current != $grouped_options ? update_option( 'stats_options', $grouped_options ) : true;
-					break;
-
-				case Jetpack_Core_Json_Api_Endpoints::holiday_snow_option_name():
-					$updated = get_option( $option ) != $value ? update_option( $option, (bool) $value ? 'letitsnow' : '' ) : true;
 					break;
 
 				case 'akismet_show_user_comments_approved':
@@ -949,11 +895,6 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 						$error = sprintf( esc_html__( 'Onboarding failed to process: %s', 'jetpack' ), $result );
 						$updated = false;
 					}
-					break;
-
-				case 'show_welcome_for_new_plan':
-					// If option value was the same, consider it done.
-					$updated = get_option( $option ) !== $value ? update_option( $option, (bool) $value ) : true;
 					break;
 
 				default:
@@ -1321,14 +1262,14 @@ class Jetpack_Core_API_Data extends Jetpack_Core_API_XMLRPC_Consumer_Endpoint {
 				}
 				$options = Jetpack_Core_Json_Api_Endpoints::get_updateable_data_list( $params );
 				foreach ( $options as $option => $definition ) {
-					if ( in_array( $options[ $option ]['jp_group'], array( 'after-the-deadline', 'post-by-email' ) ) ) {
+					if ( in_array( $options[ $option ]['jp_group'], array( 'post-by-email' ) ) ) {
 						$module = $options[ $option ]['jp_group'];
 						break;
 					}
 				}
 			}
-			// User is trying to create, regenerate or delete its PbE || ATD settings.
-			if ( 'post-by-email' === $module || 'after-the-deadline' === $module ) {
+			// User is trying to create, regenerate or delete its PbE.
+			if ( 'post-by-email' === $module ) {
 				return current_user_can( 'edit_posts' ) && current_user_can( 'jetpack_admin_page' );
 			}
 			return current_user_can( 'jetpack_configure_modules' );
@@ -1498,7 +1439,7 @@ class Jetpack_Core_API_Module_Data_Endpoint {
 	 *     @type string $date Date range to restrict results to.
 	 * }
 	 *
-	 * @return int|string Number of spam blocked by Akismet. Otherwise, an error message.
+	 * @return WP_Error|WP_HTTP_Response|WP_REST_Response Stats information relayed from WordPress.com.
 	 */
 	public function get_stats_data( WP_REST_Request $request ) {
 		// Get parameters to fetch Stats data.
